@@ -1,0 +1,4 @@
+experiment:
+  name: "steady_state"
+  duration: 60
+  description: "All tenants at constant rates - baseline fairness measurement"

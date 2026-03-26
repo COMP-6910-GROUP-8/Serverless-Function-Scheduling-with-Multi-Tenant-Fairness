@@ -1,0 +1,9 @@
+experiment:
+  name: "burst_test"
+  duration: 60
+  description: "Large tenant spikes 5x at t=20s for 10s"
+  burst:
+    tenant_id: "tenant_large_01"
+    start_time: 20.0
+    duration: 10.0
+    multiplier: 5.0

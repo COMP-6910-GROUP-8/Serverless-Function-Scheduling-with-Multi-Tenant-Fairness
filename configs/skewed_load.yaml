@@ -1,0 +1,9 @@
+experiment:
+  name: "skewed_load"
+  duration: 60
+  description: "2 large tenants submit 70% of all invocations"
+  overrides:
+    tenant_large_01:
+      arrival_rate: [200, 250]
+    tenant_large_02:
+      arrival_rate: [200, 250]

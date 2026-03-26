@@ -1,0 +1,9 @@
+experiment:
+  name: "scalability"
+  duration: 30
+  description: "Vary tenant count and server count"
+  runs:
+    - { tenants: 10, servers: 4 }
+    - { tenants: 15, servers: 8 }
+    - { tenants: 20, servers: 12 }
+    - { tenants: 25, servers: 16 }
