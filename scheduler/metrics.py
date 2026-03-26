@@ -111,13 +111,16 @@ def compute_experiment_summary(
     tenant_metrics: list[dict], scheduling_overheads: list[float]
 ) -> dict:
     """Aggregate tenant metrics into experiment-level summary."""
-    ratios = [m["fair_share_ratio"] for m in tenant_metrics if m["fair_share_ratio"] > 0]
+    # Jain's over SLA compliance scores: measures whether all tenants get
+    # equitable service quality, not resource consumption equality
+    sla_compliance = [1.0 - m["sla_violation_rate"] for m in tenant_metrics
+                      if m["throughput"] > 0]  # only tenants with actual work
     violations = [m["sla_violation_rate"] for m in tenant_metrics]
 
     overhead_ms = [o * 1000 for o in scheduling_overheads] if scheduling_overheads else [0.0]
 
     return {
-        "jains_fairness_index": jains_fairness_index(ratios),
+        "jains_fairness_index": jains_fairness_index(sla_compliance),
         "overall_sla_violation_rate": float(np.mean(violations)) if violations else 0.0,
         "avg_scheduling_overhead_ms": float(np.mean(overhead_ms)),
         "p95_scheduling_overhead_ms": float(np.percentile(overhead_ms, 95)),

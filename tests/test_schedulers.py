@@ -69,7 +69,8 @@ def test_round_robin_cycling(servers, tenants):
     # Should not assign all from one tenant before others
     # First 3 should be one from each tenant
     first_three_tids = set(assigned_tids[:3])
-    assert len(first_three_tids) >= 2  # At least 2 different tenants in first 3
+    # At least 2 different tenants in first 3
+    assert len(first_three_tids) >= 2
 
 
 def test_sjf_ordering(servers, tenants):

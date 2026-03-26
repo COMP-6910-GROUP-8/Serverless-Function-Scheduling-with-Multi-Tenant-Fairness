@@ -54,7 +54,8 @@ class FairShareScheduler(BaseScheduler):
             return []
 
         # 2. Compute per-tenant FairShareDeficit and SLA_Urgency
-        entitlement = self.total_cpu_capacity / n_active
+        # Entitlement in millicore-seconds (rate × window) to match consumption units
+        entitlement = (self.total_cpu_capacity / n_active) * self.sliding_window
         window_start = current_time - self.sliding_window
 
         tenant_priority = {}
@@ -109,24 +110,24 @@ class FairShareScheduler(BaseScheduler):
 
     def _compute_sla_urgency(self, tenant: Tenant, current_time: float) -> float:
         """
-        SLA_Urgency = max(latency_urgency, throughput_urgency)
+        SLA_Urgency = max(latency_urgency, throughput_urgency), capped to [0, 1].
         Uses max so either dimension breaching triggers a response.
+        Capped so urgency can't dominate the deficit signal in the priority formula.
         """
-        # Latency urgency: P95 of recent latencies vs threshold
+        # Latency urgency: 0 if within SLA, ramps to 1.0 at 2x threshold
         latency_urgency = 0.0
         if tenant.recent_latencies:
             p95 = float(np.percentile(list(tenant.recent_latencies), 95))
-            latency_urgency = p95 / self.sla_latency_threshold
+            latency_urgency = min(1.0, p95 / self.sla_latency_threshold)
 
-        # Throughput urgency: how far below minimum guarantee
+        # Throughput urgency: how far below minimum guarantee (already 0-1)
         throughput_urgency = 0.0
         expected = tenant.arrival_rate * self.sla_min_throughput_ratio
         if expected > 0 and tenant.recent_latencies:
-            # Estimate actual throughput from recent completions within last second
             actual_throughput = len(tenant.recent_latencies) / max(
                 self.sliding_window, 0.001
             )
-            throughput_urgency = max(0.0, 1.0 - actual_throughput / expected)
+            throughput_urgency = min(1.0, max(0.0, 1.0 - actual_throughput / expected))
 
         return max(latency_urgency, throughput_urgency)
 
