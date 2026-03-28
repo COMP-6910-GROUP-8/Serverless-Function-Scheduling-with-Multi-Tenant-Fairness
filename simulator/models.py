@@ -102,5 +102,5 @@ class Tenant:
     function_profile: dict
     pending_queue: list = field(default_factory=list)
     consumption_window: deque = field(default_factory=deque)
-    # Stores recent completed latencies for P95 calculation in FairShareScheduler
-    recent_latencies: deque = field(default_factory=lambda: deque(maxlen=1000))
+    # Stores recent (timestamp, latency) tuples for time-windowed P95 calculation
+    recent_latencies: deque = field(default_factory=deque)

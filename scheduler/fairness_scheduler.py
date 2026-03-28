@@ -114,17 +114,26 @@ class FairShareScheduler(BaseScheduler):
         Uses max so either dimension breaching triggers a response.
         Capped so urgency can't dominate the deficit signal in the priority formula.
         """
-        # Latency urgency: 0 if within SLA, ramps to 1.0 at 2x threshold
+        window_start = current_time - self.sliding_window
+
+        # Prune expired entries from recent_latencies
+        while tenant.recent_latencies and tenant.recent_latencies[0][0] < window_start:
+            tenant.recent_latencies.popleft()
+
+        # Extract latency values within the window
+        window_latencies = [lat for _, lat in tenant.recent_latencies]
+
+        # Latency urgency: ramps from 0 to 1.0 as P95 approaches threshold
         latency_urgency = 0.0
-        if tenant.recent_latencies:
-            p95 = float(np.percentile(list(tenant.recent_latencies), 95))
+        if window_latencies:
+            p95 = float(np.percentile(window_latencies, 95))
             latency_urgency = min(1.0, p95 / self.sla_latency_threshold)
 
-        # Throughput urgency: how far below minimum guarantee (already 0-1)
+        # Throughput urgency: how far below minimum guarantee (0-1)
         throughput_urgency = 0.0
         expected = tenant.arrival_rate * self.sla_min_throughput_ratio
-        if expected > 0 and tenant.recent_latencies:
-            actual_throughput = len(tenant.recent_latencies) / max(
+        if expected > 0 and window_latencies:
+            actual_throughput = len(window_latencies) / max(
                 self.sliding_window, 0.001
             )
             throughput_urgency = min(1.0, max(0.0, 1.0 - actual_throughput / expected))

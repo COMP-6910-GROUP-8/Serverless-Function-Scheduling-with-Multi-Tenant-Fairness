@@ -156,7 +156,7 @@ class SimulationEngine:
             cpu_ms = inv.cpu_demand * execution_time
             mem_mb_ms = inv.memory_demand * execution_time
             tenant.consumption_window.append((env.now, cpu_ms, mem_mb_ms))
-            tenant.recent_latencies.append(inv.total_latency)
+            tenant.recent_latencies.append((env.now, inv.total_latency))
 
         self.completed.append(inv)
 
