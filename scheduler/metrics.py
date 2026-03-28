@@ -127,10 +127,15 @@ def compute_experiment_summary(
     tenant_metrics: list[dict], scheduling_overheads: list[float]
 ) -> dict:
     """Aggregate tenant metrics into experiment-level summary."""
-    # Jain's over resource share ratios: measures whether all tenants get
+    # Jain's over resource share ratios (primary): measures whether all tenants get
     # equitable resource allocation (actual_share / proportional_entitlement)
     fair_share_ratios = [m["fair_share_ratio"] for m in tenant_metrics
                          if m["throughput"] > 0]  # only active tenants
+
+    # Jain's over SLA compliance (secondary): measures whether all tenants
+    # receive equitable service quality (1 - violation_rate per tenant)
+    sla_compliance = [1.0 - m["sla_violation_rate"] for m in tenant_metrics
+                      if m["throughput"] > 0]
 
     # SLA violation: per-tenant binary (is tenant's P95 > threshold?)
     # already computed as sla_violated (bool) per tenant in compute_tenant_metrics
@@ -165,6 +170,7 @@ def compute_experiment_summary(
 
     return {
         "jains_fairness_index": jains_fairness_index(fair_share_ratios),
+        "jains_sla_compliance": jains_fairness_index(sla_compliance),
         "overall_sla_violation_rate": invocation_sla_violation_rate,
         "tenant_sla_violation_rate": tenant_sla_violation_rate,
         "avg_scheduling_overhead_ms": float(np.mean(overhead_ms)),

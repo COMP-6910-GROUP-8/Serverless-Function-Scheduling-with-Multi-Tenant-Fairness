@@ -15,6 +15,10 @@ import simpy
 from scheduler.baseline_schedulers import BaseScheduler
 from simulator.models import FunctionInvocation, Tenant, Server
 
+# Scheduling tick interval (seconds of simulation time).
+# The scheduler runs at most once per tick, batching arrivals and completions.
+SCHEDULE_TICK = 0.010  # 10ms
+
 
 class SimulationEngine:
     def __init__(self, config: dict, scheduler: BaseScheduler, verbose: bool = False):
@@ -41,6 +45,7 @@ class SimulationEngine:
         self.completed: list[FunctionInvocation] = []
         self.scheduling_overheads: list[float] = []
         self.tenant_map = {t.id: t for t in tenants}
+        self._dirty = False  # True when pending queues have changed since last schedule
         duration = self.config["experiment"]["duration"]
 
         # Reset server state
@@ -60,6 +65,7 @@ class SimulationEngine:
 
         # Start background processes
         env.process(self._container_eviction(env))
+        env.process(self._scheduler_tick(env, duration))
         env.process(self._invocation_arrival(env, invocations, duration))
 
         env.run(until=duration)
@@ -71,26 +77,31 @@ class SimulationEngine:
         for inv in invocations:
             if inv.arrival_time >= duration:
                 break
-            # Wait until this invocation's arrival time
             delay = inv.arrival_time - env.now
             if delay > 0:
                 yield env.timeout(delay)
 
-            # Enqueue
             tenant = self.tenant_map.get(inv.tenant_id)
             if tenant:
                 tenant.pending_queue.append(inv)
+                self._dirty = True
 
-            # Try to schedule pending work
-            yield from self._schedule_pending(env)
+    def _scheduler_tick(self, env, duration):
+        """Run the scheduler at fixed intervals, batching work between ticks."""
+        while env.now < duration:
+            yield env.timeout(SCHEDULE_TICK)
+            if self._dirty:
+                self._run_schedule(env)
 
-    def _schedule_pending(self, env):
+    def _run_schedule(self, env):
         """Collect all pending invocations, call scheduler, dispatch assignments."""
         all_pending = []
         for tenant in self.tenant_map.values():
-            all_pending.extend(tenant.pending_queue)
+            if tenant.pending_queue:
+                all_pending.extend(tenant.pending_queue)
 
         if not all_pending:
+            self._dirty = False
             return
 
         # Measure scheduling overhead
@@ -101,19 +112,21 @@ class SimulationEngine:
         t1 = time.perf_counter()
         self.scheduling_overheads.append(t1 - t0)
 
+        if not assignments:
+            return
+
         # Remove assigned invocations from their tenant queues and start execution
-        assigned_ids = set()
+        assigned_ids = {inv.id for inv, _ in assignments}
         for inv, server in assignments:
-            assigned_ids.add(inv.id)
             env.process(self._execute_invocation(env, inv, server))
 
         for tenant in self.tenant_map.values():
-            tenant.pending_queue = [
-                i for i in tenant.pending_queue if i.id not in assigned_ids
-            ]
+            if tenant.pending_queue:
+                tenant.pending_queue = [
+                    i for i in tenant.pending_queue if i.id not in assigned_ids
+                ]
 
-        # yield a zero-timeout so SimPy processes the new events
-        yield env.timeout(0)
+        self._dirty = any(t.pending_queue for t in self.tenant_map.values())
 
     def _execute_invocation(self, env, inv: FunctionInvocation, server: Server):
         """Execute a single function invocation on the assigned server."""
@@ -159,9 +172,7 @@ class SimulationEngine:
             tenant.recent_latencies.append((env.now, inv.total_latency))
 
         self.completed.append(inv)
-
-        # After freeing resources, try scheduling queued invocations
-        yield from self._schedule_pending(env)
+        self._dirty = True  # freed resources, pending work may now fit
 
     def _container_eviction(self, env):
         """Background process: evict expired warm containers every 1 second."""

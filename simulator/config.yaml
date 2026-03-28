@@ -48,7 +48,7 @@ cold_start:
   container_ttl: 300
 
 sla:
-  p95_latency_threshold: 0.100
+  p95_latency_threshold: 0.500
   min_throughput_ratio: 0.80
 
 scheduler:

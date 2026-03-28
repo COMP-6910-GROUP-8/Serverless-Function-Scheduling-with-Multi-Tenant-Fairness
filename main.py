@@ -207,8 +207,10 @@ def _print_summary(exp_name: str, sched_name: str, summary: dict, tenant_metrics
             size_latencies[size]["avg"].append(m["avg_latency"])
             size_latencies[size]["p95"].append(m["p95_latency"])
 
-    print(f"\n  Jain's Fairness Index:    {summary['jains_fairness_index']:.4f}")
-    print(f"  SLA Violation Rate:       {summary['overall_sla_violation_rate']:.1%}")
+    print(f"\n  Jain's Fairness (resource): {summary['jains_fairness_index']:.4f}")
+    print(f"  Jain's Fairness (SLA):      {summary['jains_sla_compliance']:.4f}")
+    print(f"  SLA Violation Rate:         {summary['overall_sla_violation_rate']:.1%}")
+    print(f"  Tenants Violating SLA:      {summary['tenant_sla_violation_rate']:.1%}")
 
     for size in ["small", "medium", "large"]:
         if size in size_latencies:

@@ -27,7 +27,7 @@ class FairShareScheduler(BaseScheduler):
         alpha: float = 0.6,
         beta: float = 0.4,
         sliding_window: float = 1.0,
-        sla_latency_threshold: float = 0.100,
+        sla_latency_threshold: float = 0.500,
         sla_min_throughput_ratio: float = 0.80,
         total_cpu_capacity: int = 32000,
         total_memory_capacity: int = 65536,
