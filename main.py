@@ -22,12 +22,14 @@ from workloads.trace_generator import generate_tenants, generate_invocations
 from scheduler import FIFOScheduler, RoundRobinScheduler, SJFScheduler, FairShareScheduler
 from scheduler.metrics import (
     compute_tenant_metrics, compute_experiment_summary,
+    compute_function_type_metrics,
     export_invocations_csv, export_metrics_csv, export_experiment_json,
 )
 from plotting.plots import (
     plot_fairness_index, plot_p95_latency_by_size, plot_sla_violation_rate,
     plot_cold_start_by_size, plot_throughput_boxplot, plot_ablation_heatmap,
-    plot_scalability,
+    plot_scalability, plot_p95_latency_by_function_type,
+    plot_max_wait_by_function_type, plot_throughput_ratio_by_function_type,
 )
 
 SCHEDULERS = ["fifo", "round_robin", "sjf", "fair_share"]
@@ -44,17 +46,12 @@ def get_scheduler(name: str, config: dict):
         return SJFScheduler()
     elif name == "fair_share":
         sched_cfg = config.get("scheduler", {})
-        server_cfg = config["servers"]
-        total_cpu = server_cfg["count"] * server_cfg["cpu_capacity"]
-        total_mem = server_cfg["count"] * server_cfg["memory_capacity"]
         return FairShareScheduler(
             alpha=sched_cfg.get("alpha", 0.6),
             beta=sched_cfg.get("beta", 0.4),
             sliding_window=sched_cfg.get("sliding_window", 1.0),
             sla_latency_threshold=config["sla"]["p95_latency_threshold"],
             sla_min_throughput_ratio=config["sla"]["min_throughput_ratio"],
-            total_cpu_capacity=total_cpu,
-            total_memory_capacity=total_mem,
             container_ttl=config["cold_start"]["container_ttl"],
         )
     else:
@@ -86,7 +83,8 @@ def run_single(config: dict, scheduler_name: str, output_dir: str, verbose: bool
     # Compute metrics
     tenant_map = {t.id: t for t in tenants}
     tenant_metrics = compute_tenant_metrics(completed, tenants, config, duration)
-    summary = compute_experiment_summary(tenant_metrics, overheads)
+    ft_metrics = compute_function_type_metrics(completed, tenant_map, config, duration)
+    summary = compute_experiment_summary(tenant_metrics, overheads, ft_metrics)
 
     # Export CSV
     out_path = os.path.join(output_dir, exp_name, scheduler_name)
@@ -128,6 +126,9 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
         plot_sla_violation_rate(experiment_data, os.path.join(comp_dir, "sla_violation_rate.png"))
         plot_cold_start_by_size(experiment_data, os.path.join(comp_dir, "cold_start_by_size.png"))
         plot_throughput_boxplot(experiment_data, os.path.join(comp_dir, "throughput_boxplot.png"))
+        plot_p95_latency_by_function_type(experiment_data, os.path.join(comp_dir, "p95_latency_by_function_type.png"))
+        plot_max_wait_by_function_type(experiment_data, os.path.join(comp_dir, "max_wait_by_function_type.png"))
+        plot_throughput_ratio_by_function_type(experiment_data, os.path.join(comp_dir, "throughput_ratio_by_function_type.png"))
 
     # --- Scalability experiment ---
     print(f"\n{'='*60}")

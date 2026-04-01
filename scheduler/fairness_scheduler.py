@@ -4,8 +4,7 @@
 
   scheduler = FairShareScheduler(
       alpha=0.6, beta=0.4, sliding_window=1.0,
-      sla_latency_threshold=0.100, sla_min_throughput_ratio=0.80,
-      total_cpu_capacity=32000, total_memory_capacity=65536,
+      sla_latency_threshold=0.500, sla_min_throughput_ratio=0.80,
   )
   assignments = scheduler.schedule(pending_invocations, tenants_dict, servers, current_time)
 */
@@ -29,8 +28,6 @@ class FairShareScheduler(BaseScheduler):
         sliding_window: float = 1.0,
         sla_latency_threshold: float = 0.500,
         sla_min_throughput_ratio: float = 0.80,
-        total_cpu_capacity: int = 32000,
-        total_memory_capacity: int = 65536,
         container_ttl: float = 300.0,
     ):
         self.alpha = alpha
@@ -38,8 +35,6 @@ class FairShareScheduler(BaseScheduler):
         self.sliding_window = sliding_window
         self.sla_latency_threshold = sla_latency_threshold
         self.sla_min_throughput_ratio = sla_min_throughput_ratio
-        self.total_cpu_capacity = total_cpu_capacity
-        self.total_memory_capacity = total_memory_capacity
         self.container_ttl = container_ttl
 
     def schedule(self, pending_invocations, tenants, servers, current_time):
@@ -53,14 +48,10 @@ class FairShareScheduler(BaseScheduler):
         if n_active == 0:
             return []
 
-        # 2. Compute per-tenant FairShareDeficit and SLA_Urgency
-        # Entitlement in millicore-seconds (rate × window) to match consumption units
-        entitlement = (self.total_cpu_capacity / n_active) * self.sliding_window
-        window_start = current_time - self.sliding_window
-
+        # 2. Compute per-tenant ThroughputDeficit and SLA_Urgency
         tenant_priority = {}
         for tid, tenant in active_tenants.items():
-            deficit = self._compute_deficit(tenant, entitlement, window_start)
+            deficit = self._compute_deficit(tenant, current_time)
             urgency = self._compute_sla_urgency(tenant, current_time)
             tenant_priority[tid] = self.alpha * deficit + self.beta * urgency
 
@@ -90,23 +81,28 @@ class FairShareScheduler(BaseScheduler):
 
         return assignments
 
-    def _compute_deficit(
-        self, tenant: Tenant, entitlement: float, window_start: float
-    ) -> float:
+    def _compute_deficit(self, tenant: Tenant, current_time: float) -> float:
         """
-        FairShareDeficit = (entitlement - actual) / entitlement
-        Positive = starved, Negative = over-consuming.
+        ThroughputDeficit = (target - actual) / target
+        Positive = starved (completing fewer invocations than expected).
+        Negative = over-performing.
+        Clamped to [-1, 1].
         """
-        # Prune expired entries and sum consumption within window
-        actual_cpu = 0.0
-        while tenant.consumption_window and tenant.consumption_window[0][0] < window_start:
-            tenant.consumption_window.popleft()
-        for _, cpu_ms, _ in tenant.consumption_window:
-            actual_cpu += cpu_ms
-
-        if entitlement == 0:
+        target_throughput = tenant.arrival_rate * self.sla_min_throughput_ratio
+        if target_throughput <= 0:
             return 0.0
-        return (entitlement - actual_cpu) / entitlement
+
+        # Count completed invocations within the sliding window
+        window_start = current_time - self.sliding_window
+        while tenant.recent_latencies and tenant.recent_latencies[0][0] < window_start:
+            tenant.recent_latencies.popleft()
+
+        actual_throughput = len(tenant.recent_latencies) / max(
+            self.sliding_window, 0.001
+        )
+
+        deficit = (target_throughput - actual_throughput) / target_throughput
+        return max(-1.0, min(1.0, deficit))
 
     def _compute_sla_urgency(self, tenant: Tenant, current_time: float) -> float:
         """
@@ -132,7 +128,7 @@ class FairShareScheduler(BaseScheduler):
         # Throughput urgency: how far below minimum guarantee (0-1)
         throughput_urgency = 0.0
         expected = tenant.arrival_rate * self.sla_min_throughput_ratio
-        if expected > 0 and window_latencies:
+        if expected > 0:
             actual_throughput = len(window_latencies) / max(
                 self.sliding_window, 0.001
             )

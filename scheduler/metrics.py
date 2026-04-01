@@ -2,11 +2,13 @@
 /* USAGE:
   from scheduler.metrics import (
       jains_fairness_index, compute_tenant_metrics, compute_experiment_summary,
+      compute_function_type_metrics,
       export_invocations_csv, export_metrics_csv, export_experiment_json,
   )
 
   tenant_metrics = compute_tenant_metrics(completed, tenants, config, duration=60)
-  summary = compute_experiment_summary(tenant_metrics, scheduling_overheads)
+  ft_metrics = compute_function_type_metrics(completed, tenant_map, config, duration=60)
+  summary = compute_experiment_summary(tenant_metrics, scheduling_overheads, ft_metrics)
   export_invocations_csv(completed, tenant_map, "results/steady_state/fifo/invocations.csv")
   export_metrics_csv(tenant_metrics, "results/steady_state/fifo/metrics_summary.csv")
 */
@@ -123,8 +125,55 @@ def compute_tenant_metrics(
     return results
 
 
+def compute_function_type_metrics(
+    invocations: list[FunctionInvocation],
+    tenants: dict[str, Tenant],
+    config: dict,
+    duration: float,
+) -> dict:
+    """Compute per-function-type metrics: P95 latency, max wait time, throughput ratio."""
+    by_ftype: dict[str, list[FunctionInvocation]] = {}
+    for inv in invocations:
+        by_ftype.setdefault(inv.function_type, []).append(inv)
+
+    # Count submitted invocations per function type from all generated invocations
+    # is not available here — use completed invocations as denominator proxy.
+    # Instead, compute throughput as completed/duration vs expected from arrival rates.
+
+    # Build expected invocation counts per function type from tenant profiles
+    expected_per_ftype: dict[str, float] = {}
+    for tenant in tenants.values():
+        for ftype, weight in tenant.function_profile.items():
+            expected_per_ftype[ftype] = expected_per_ftype.get(ftype, 0.0) + (
+                tenant.arrival_rate * weight * duration
+            )
+
+    results = {}
+    for ftype in ["lightweight", "medium", "heavy"]:
+        ftype_invs = by_ftype.get(ftype, [])
+        latencies = [i.total_latency for i in ftype_invs if i.total_latency is not None]
+        wait_times = [i.wait_time for i in ftype_invs if i.wait_time is not None]
+
+        expected_count = expected_per_ftype.get(ftype, 0.0)
+        actual_count = len(ftype_invs)
+
+        results[ftype] = {
+            "p95_latency": float(np.percentile(latencies, 95)) if latencies else 0.0,
+            "max_wait_time": float(max(wait_times)) if wait_times else 0.0,
+            "throughput_ratio": (
+                actual_count / expected_count if expected_count > 0 else 0.0
+            ),
+            "total_completed": actual_count,
+            "total_expected": round(expected_count),
+        }
+
+    return results
+
+
 def compute_experiment_summary(
-    tenant_metrics: list[dict], scheduling_overheads: list[float]
+    tenant_metrics: list[dict],
+    scheduling_overheads: list[float],
+    function_type_metrics: dict | None = None,
 ) -> dict:
     """Aggregate tenant metrics into experiment-level summary."""
     # Jain's over resource share ratios (primary): measures whether all tenants get
@@ -168,7 +217,7 @@ def compute_experiment_summary(
                 "tenants_violating_sla": sum(1 for m in size_metrics if m["sla_violated"]),
             }
 
-    return {
+    summary = {
         "jains_fairness_index": jains_fairness_index(fair_share_ratios),
         "jains_sla_compliance": jains_fairness_index(sla_compliance),
         "overall_sla_violation_rate": invocation_sla_violation_rate,
@@ -177,6 +226,11 @@ def compute_experiment_summary(
         "p95_scheduling_overhead_ms": float(np.percentile(overhead_ms, 95)),
         "per_size": per_size,
     }
+
+    if function_type_metrics is not None:
+        summary["per_function_type"] = function_type_metrics
+
+    return summary
 
 
 def export_invocations_csv(

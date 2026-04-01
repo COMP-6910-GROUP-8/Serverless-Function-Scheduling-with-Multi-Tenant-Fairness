@@ -86,25 +86,25 @@ def test_sjf_ordering(servers, tenants):
 
 
 def test_fair_share_prioritizes_starved(servers, tenants):
-    """Starved tenant (t3) should be scheduled before over-consuming tenant (t1)."""
-    # Simulate t1 as over-consuming: fill consumption window
-    tenants["t1"].consumption_window = deque([
-        (4.9, 8000, 4096),  # heavy consumption
-        (4.95, 8000, 4096),
+    """Starved tenant (t3) should be scheduled before over-performing tenant (t1)."""
+    # Simulate t1 as over-performing: many recent completions
+    tenants["t1"].recent_latencies = deque([
+        (4.8, 0.050),
+        (4.85, 0.040),
+        (4.9, 0.060),
+        (4.95, 0.045),
     ])
-    # t3 has no consumption (starved)
-    tenants["t3"].consumption_window = deque()
+    # t3 has no completions (starved — zero throughput)
+    tenants["t3"].recent_latencies = deque()
 
     invocations = [
         _make_inv("t1_inv", "t1", 4.5),
         _make_inv("t3_inv", "t3", 4.5),
     ]
-    scheduler = FairShareScheduler(
-        alpha=0.6, beta=0.4, total_cpu_capacity=8000, total_memory_capacity=16384,
-    )
+    scheduler = FairShareScheduler(alpha=0.6, beta=0.4)
     assignments = scheduler.schedule(invocations, tenants, servers, 5.0)
     assigned_ids = [inv.id for inv, _ in assignments]
-    # t3 (starved) should come before t1 (over-consuming)
+    # t3 (starved) should come before t1 (over-performing)
     assert assigned_ids.index("t3_inv") < assigned_ids.index("t1_inv")
 
 
@@ -147,7 +147,7 @@ def test_end_to_end_pipeline():
     from simulator.config_loader import load_config
     from simulator.cloudsim_runner import SimulationEngine
     from workloads.trace_generator import generate_tenants, generate_invocations
-    from scheduler.metrics import compute_tenant_metrics, compute_experiment_summary
+    from scheduler.metrics import compute_tenant_metrics, compute_experiment_summary, compute_function_type_metrics
 
     config = load_config()
     # Override for small scale
@@ -173,7 +173,14 @@ def test_end_to_end_pipeline():
     assert all(inv.end_time is not None for inv in completed)
 
     metrics = compute_tenant_metrics(completed, tenants, config, 3.0)
-    summary = compute_experiment_summary(metrics, overheads)
+    tenant_map = {t.id: t for t in tenants}
+    ft_metrics = compute_function_type_metrics(completed, tenant_map, config, 3.0)
+    summary = compute_experiment_summary(metrics, overheads, ft_metrics)
 
     assert 0.0 <= summary["jains_fairness_index"] <= 1.0
     assert summary["avg_scheduling_overhead_ms"] >= 0
+    assert "per_function_type" in summary
+    for ftype in ft_metrics:
+        assert ft_metrics[ftype]["p95_latency"] >= 0
+        assert ft_metrics[ftype]["max_wait_time"] >= 0
+        assert ft_metrics[ftype]["throughput_ratio"] >= 0.0

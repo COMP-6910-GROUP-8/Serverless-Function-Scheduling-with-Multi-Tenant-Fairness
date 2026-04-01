@@ -25,6 +25,7 @@ SCHEDULER_LABELS = {
     "fair_share": "Fair-Share (Ours)",
 }
 SIZE_ORDER = ["small", "medium", "large"]
+FTYPE_ORDER = ["lightweight", "medium", "heavy"]
 
 
 def _save(output_path: str):
@@ -186,4 +187,78 @@ def plot_scalability(scalability_data: dict, output_path: str):
     ax.set_title("Scheduling Overhead vs. Tenant Count")
     ax.legend()
     ax.grid(True, alpha=0.3)
+    _save(output_path)
+
+
+def plot_p95_latency_by_function_type(experiment_data: dict, output_path: str, sla_threshold: float = 0.5):
+    schedulers = _get_schedulers(experiment_data)
+    n_schedulers = len(schedulers)
+    bar_width = 0.18
+    x = np.arange(len(FTYPE_ORDER))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for idx, sched in enumerate(schedulers):
+        ft = experiment_data[sched]["summary"].get("per_function_type", {})
+        values = [ft.get(f, {}).get("p95_latency", 0.0) for f in FTYPE_ORDER]
+        offset = (idx - n_schedulers / 2 + 0.5) * bar_width
+        ax.bar(x + offset, values, bar_width,
+               label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
+               edgecolor="white", linewidth=0.5)
+
+    ax.axhline(y=sla_threshold, color="red", linestyle="--", linewidth=1, label=f"SLA ({sla_threshold}s)")
+    ax.set_xlabel("Function Type")
+    ax.set_ylabel("P95 Latency (seconds)")
+    ax.set_title("P95 Latency by Function Type")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f.capitalize() for f in FTYPE_ORDER])
+    ax.legend(fontsize=8)
+    _save(output_path)
+
+
+def plot_max_wait_by_function_type(experiment_data: dict, output_path: str):
+    schedulers = _get_schedulers(experiment_data)
+    n_schedulers = len(schedulers)
+    bar_width = 0.18
+    x = np.arange(len(FTYPE_ORDER))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for idx, sched in enumerate(schedulers):
+        ft = experiment_data[sched]["summary"].get("per_function_type", {})
+        values = [ft.get(f, {}).get("max_wait_time", 0.0) for f in FTYPE_ORDER]
+        offset = (idx - n_schedulers / 2 + 0.5) * bar_width
+        ax.bar(x + offset, values, bar_width,
+               label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
+               edgecolor="white", linewidth=0.5)
+
+    ax.set_xlabel("Function Type")
+    ax.set_ylabel("Max Wait Time (seconds)")
+    ax.set_title("Max Wait Time by Function Type")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f.capitalize() for f in FTYPE_ORDER])
+    ax.legend(fontsize=8)
+    _save(output_path)
+
+
+def plot_throughput_ratio_by_function_type(experiment_data: dict, output_path: str):
+    schedulers = _get_schedulers(experiment_data)
+    n_schedulers = len(schedulers)
+    bar_width = 0.18
+    x = np.arange(len(FTYPE_ORDER))
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for idx, sched in enumerate(schedulers):
+        ft = experiment_data[sched]["summary"].get("per_function_type", {})
+        values = [ft.get(f, {}).get("throughput_ratio", 0.0) for f in FTYPE_ORDER]
+        offset = (idx - n_schedulers / 2 + 0.5) * bar_width
+        ax.bar(x + offset, values, bar_width,
+               label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
+               edgecolor="white", linewidth=0.5)
+
+    ax.axhline(y=1.0, color="gray", linestyle="--", linewidth=1, label="100% Throughput")
+    ax.set_xlabel("Function Type")
+    ax.set_ylabel("Throughput Ratio (completed / expected)")
+    ax.set_title("Throughput Ratio by Function Type")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f.capitalize() for f in FTYPE_ORDER])
+    ax.legend(fontsize=8)
     _save(output_path)
