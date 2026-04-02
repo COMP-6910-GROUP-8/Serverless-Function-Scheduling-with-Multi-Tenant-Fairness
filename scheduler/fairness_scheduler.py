@@ -3,161 +3,121 @@
   from scheduler.fairness_scheduler import FairShareScheduler
 
   scheduler = FairShareScheduler(
-      alpha=0.6, beta=0.4, sliding_window=1.0,
-      sla_latency_threshold=1.000, sla_min_throughput_ratio=0.80,
+      sliding_window=5.0,
+      container_ttl=300.0,
   )
   assignments = scheduler.schedule(pending_invocations, tenants_dict, servers, current_time)
 */
 """
 
-import math
 from scheduler.baseline_schedulers import BaseScheduler
 from simulator.models import FunctionInvocation, Tenant, Server
 
 
 class FairShareScheduler(BaseScheduler):
     """
-    Weighted Priority Scheduler with Cost-Efficient Fairness.
+    Fair-Share Scheduler — two-phase scheduling.
 
-    Per-invocation scheduling score:
-        Score = (alpha * ThroughputDeficit + beta * SLA_Urgency) / sqrt(base_duration)
-
-    - ThroughputDeficit: arrival-rate-weighted measure of how far below target
-      throughput a tenant is. Positive = starved, negative = over-performing.
-    - SLA_Urgency: max(latency_urgency, throughput_urgency), capped to [0, 1].
-      Reactive safety net that triggers when a tenant approaches SLA violation.
-    - sqrt(base_duration): cost-efficiency damping. Gives lightweight functions a
-      natural throughput advantage without burying starved tenants' heavy functions.
+    Phase 1 (Fairness): Each active tenant gets at least one dispatch per
+        scheduling round, selected by deficit (most under-served first).
+        Within a tenant, the shortest job is picked (SJF).
+    Phase 2 (Efficiency): Remaining capacity filled via global SJF.
     """
 
     def __init__(
         self,
-        alpha: float = 0.6,
-        beta: float = 0.4,
-        sliding_window: float = 1.0,
-        sla_latency_threshold: float = 0.500,
-        sla_min_throughput_ratio: float = 0.80,
+        sliding_window: float = 5.0,
         container_ttl: float = 300.0,
     ):
-        self.alpha = alpha
-        self.beta = beta
         self.sliding_window = sliding_window
-        self.sla_latency_threshold = sla_latency_threshold
-        self.sla_min_throughput_ratio = sla_min_throughput_ratio
         self.container_ttl = container_ttl
+        self._dispatch_counts: dict[str, int] = {}
+        self._window_start: float = 0.0
+        self._total_dispatched: int = 0
 
     def schedule(self, pending_invocations, tenants, servers, current_time):
         if not pending_invocations:
             return []
 
-        # 1. Identify active tenants (those with pending work)
-        active_tids = set(inv.tenant_id for inv in pending_invocations)
-        active_tenants = {tid: tenants[tid] for tid in active_tids if tid in tenants}
-        n_active = len(active_tenants)
-        if n_active == 0:
-            return []
+        # Reset sliding window if expired
+        if current_time - self._window_start >= self.sliding_window:
+            self._dispatch_counts.clear()
+            self._total_dispatched = 0
+            self._window_start = current_time
 
-        # 2. Compute per-tenant deficit and urgency in a single pass
-        #    Prune recent_latencies once, then derive both metrics from it.
-        window_start = current_time - self.sliding_window
-        tenant_priority = {}
-        for tid, tenant in active_tenants.items():
-            # Prune expired entries once
-            while tenant.recent_latencies and tenant.recent_latencies[0][0] < window_start:
-                tenant.recent_latencies.popleft()
+        # Group pending by tenant, sort each queue by duration (SJF within tenant)
+        per_tenant: dict[str, list[FunctionInvocation]] = {}
+        for inv in pending_invocations:
+            per_tenant.setdefault(inv.tenant_id, []).append(inv)
+        for tid in per_tenant:
+            per_tenant[tid].sort(key=lambda i: (i.base_duration, i.arrival_time))
 
-            n_completed = len(tenant.recent_latencies)
-            actual_throughput = n_completed / max(self.sliding_window, 0.001)
-
-            # Throughput deficit
-            target_throughput = tenant.arrival_rate * self.sla_min_throughput_ratio
-            if target_throughput > 0:
-                deficit = (target_throughput - actual_throughput) / target_throughput
-                deficit = max(-1.0, min(1.0, deficit))
-            else:
-                deficit = 0.0
-
-            # SLA urgency — computed from already-pruned deque
-            urgency = self._compute_sla_urgency(
-                tenant, actual_throughput, n_completed
-            )
-
-            tenant_priority[tid] = self.alpha * deficit + self.beta * urgency
-
-        # 3. Pre-compute available server capacity once
-        server_avail = {}
+        # Pre-compute server availability
+        server_avail: dict[str, tuple[int, int]] = {}
         for server in servers:
             server_avail[server.id] = (
                 server.cpu_capacity - server.cpu_used,
                 server.memory_capacity - server.memory_used,
             )
 
-        # 4. Estimate max schedulable invocations (total free CPU / min CPU demand)
-        total_free_cpu = sum(cpu for cpu, _ in server_avail.values())
-        min_cpu = min((inv.cpu_demand for inv in pending_invocations), default=100)
-        max_schedulable = max(int(total_free_cpu / min_cpu), 1) if min_cpu > 0 else len(pending_invocations)
-
-        # 5. Sort by cost-efficient priority with sqrt damping:
-        #    score = tenant_priority / sqrt(base_duration)
-        #    sqrt dampens the duration penalty so starved tenants' heavy functions
-        #    still beat non-starved tenants' lightweight functions.
-        scored = [
-            (-(tenant_priority.get(inv.tenant_id, 0.0)
-               / math.sqrt(max(inv.base_duration, 0.001))),
-             inv.arrival_time, inv)
-            for inv in pending_invocations
-        ]
-
-        # Partial sort: only fully sort what we can actually schedule
-        if max_schedulable < len(scored):
-            # Partition around the Nth element, then sort only the top portion
-            scored.sort()
-            scored = scored[:max_schedulable * 2]  # keep 2x buffer for capacity misses
-        else:
-            scored.sort()
-
-        # 6. Assign to servers with warm-container + least-loaded preference
         assignments = []
-        provisional = {}  # {server_id: (cpu, mem)}
+        provisional: dict[str, tuple[int, int]] = {}
+        assigned_ids: set[str] = set()
 
-        for _, _, inv in scored:
+        # --- Phase 1: Fairness guarantee ---
+        # Each active tenant gets one dispatch, ordered by deficit (most under-served first)
+        active_tids = list(per_tenant.keys())
+        n_active = len(active_tids)
+        if n_active > 0:
+            fair_share = self._total_dispatched / n_active
+            tenant_deficits = []
+            for tid in active_tids:
+                dispatched = self._dispatch_counts.get(tid, 0)
+                deficit = fair_share - dispatched
+                oldest = per_tenant[tid][0].arrival_time  # queue already sorted
+                tenant_deficits.append((deficit, -oldest, tid))
+            # Highest deficit first, tie-break by oldest request
+            tenant_deficits.sort(key=lambda x: (-x[0], x[1]))
+
+            for _, _, tid in tenant_deficits:
+                inv = per_tenant[tid][0]  # shortest job (queue sorted by duration)
+                server = self._select_server(
+                    servers, inv.function_type, inv.cpu_demand, inv.memory_demand,
+                    current_time, provisional, server_avail,
+                )
+                if server:
+                    assignments.append((inv, server))
+                    assigned_ids.add(inv.id)
+                    self._track_provisional(provisional, server, inv)
+                    self._track_dispatch(tid)
+
+        # --- Phase 2: Fill remaining capacity with global SJF ---
+        remaining = [
+            inv for inv in pending_invocations
+            if inv.id not in assigned_ids
+        ]
+        remaining.sort(key=lambda i: (i.base_duration, i.arrival_time))
+
+        for inv in remaining:
             server = self._select_server(
                 servers, inv.function_type, inv.cpu_demand, inv.memory_demand,
                 current_time, provisional, server_avail,
             )
             if server:
                 assignments.append((inv, server))
-                prev_cpu, prev_mem = provisional.get(server.id, (0, 0))
-                provisional[server.id] = (
-                    prev_cpu + inv.cpu_demand,
-                    prev_mem + inv.memory_demand,
-                )
+                assigned_ids.add(inv.id)
+                self._track_provisional(provisional, server, inv)
+                self._track_dispatch(inv.tenant_id)
 
         return assignments
 
-    def _compute_sla_urgency(
-        self, tenant: Tenant, actual_throughput: float, n_completed: int
-    ) -> float:
-        """
-        SLA_Urgency = max(latency_urgency, throughput_urgency), capped to [0, 1].
-        Deque is already pruned by caller — no re-pruning needed.
-        """
-        # Latency urgency: ramps from 0 to 1.0 as P95 approaches threshold
-        latency_urgency = 0.0
-        if n_completed > 0:
-            # Manual P95 via sorted index — avoids numpy array allocation
-            latencies = sorted(lat for _, lat in tenant.recent_latencies)
-            idx = max(0, int(math.ceil(0.95 * len(latencies))) - 1)
-            p95 = latencies[idx]
-            latency_urgency = min(1.0, p95 / self.sla_latency_threshold)
+    def _track_provisional(self, provisional, server, inv):
+        prev_cpu, prev_mem = provisional.get(server.id, (0, 0))
+        provisional[server.id] = (prev_cpu + inv.cpu_demand, prev_mem + inv.memory_demand)
 
-        # Throughput urgency: how far below minimum guarantee (0-1)
-        throughput_urgency = 0.0
-        expected = tenant.arrival_rate * self.sla_min_throughput_ratio
-        if expected > 0:
-            throughput_urgency = min(1.0, max(0.0, 1.0 - actual_throughput / expected))
-
-        return max(latency_urgency, throughput_urgency)
+    def _track_dispatch(self, tenant_id):
+        self._dispatch_counts[tenant_id] = self._dispatch_counts.get(tenant_id, 0) + 1
+        self._total_dispatched += 1
 
     def _select_server(
         self,
@@ -170,10 +130,9 @@ class FairShareScheduler(BaseScheduler):
         server_avail: dict,
     ) -> Server | None:
         """
-        Two-step server selection:
-        1. Prefer servers with warm container + capacity → least CPU loaded
-        2. Fallback: any server with capacity → least CPU loaded, tie-break by memory
-        Uses pre-computed server_avail to skip obviously-full servers fast.
+        Server selection: warm-container preference + least-loaded.
+        1. Prefer servers with warm container + capacity -> least CPU loaded
+        2. Fallback: any server with capacity -> least CPU loaded, tie-break by memory
         """
         warm_best = None
         warm_best_key = None
@@ -181,7 +140,6 @@ class FairShareScheduler(BaseScheduler):
         cold_best_key = None
 
         for server in servers:
-            # Quick capacity check using pre-computed availability
             base_cpu, base_mem = server_avail[server.id]
             prov_cpu, prov_mem = provisional.get(server.id, (0, 0))
             avail_cpu = base_cpu - prov_cpu

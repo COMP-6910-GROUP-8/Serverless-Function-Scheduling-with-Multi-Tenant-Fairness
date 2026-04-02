@@ -1,0 +1,27 @@
+experiment:
+  name: "stress_test"
+  duration: 60
+  description: "Small tenants submit heavy functions under contention - tests if SJF's incidental fairness breaks"
+
+tenants:
+  large:
+    count: 5
+    arrival_rate: [ 50, 100 ]
+    function_profile:
+      heavy: 0.6
+      medium: 0.3
+      lightweight: 0.1
+  medium:
+    count: 10
+    arrival_rate: [ 10, 30 ]
+    function_profile:
+      heavy: 0.2
+      medium: 0.5
+      lightweight: 0.3
+  small:
+    count: 10
+    arrival_rate: [ 5, 15 ]
+    function_profile:
+      heavy: 0.6
+      medium: 0.3
+      lightweight: 0.1

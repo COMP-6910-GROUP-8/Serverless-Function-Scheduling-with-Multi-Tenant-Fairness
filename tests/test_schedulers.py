@@ -87,24 +87,19 @@ def test_sjf_ordering(servers, tenants):
 
 def test_fair_share_prioritizes_starved(servers, tenants):
     """Starved tenant (t3) should be scheduled before over-performing tenant (t1)."""
-    # Simulate t1 as over-performing: many recent completions
-    tenants["t1"].recent_latencies = deque([
-        (4.8, 0.050),
-        (4.85, 0.040),
-        (4.9, 0.060),
-        (4.95, 0.045),
-    ])
-    # t3 has no completions (starved — zero throughput)
-    tenants["t3"].recent_latencies = deque()
+    scheduler = FairShareScheduler(sliding_window=5.0)
+    # Simulate t1 having been dispatched several times already (over-served)
+    scheduler._dispatch_counts = {"t1": 10}
+    scheduler._total_dispatched = 10
+    scheduler._window_start = 4.0
 
     invocations = [
-        _make_inv("t1_inv", "t1", 4.5),
-        _make_inv("t3_inv", "t3", 4.5),
+        _make_inv("t1_inv", "t1", 4.8),
+        _make_inv("t3_inv", "t3", 4.8),
     ]
-    scheduler = FairShareScheduler(alpha=0.6, beta=0.4)
     assignments = scheduler.schedule(invocations, tenants, servers, 5.0)
     assigned_ids = [inv.id for inv, _ in assignments]
-    # t3 (starved) should come before t1 (over-performing)
+    # t3 (starved, deficit = 5 - 0 = 5) should come before t1 (over-served, deficit = 5 - 10 = -5)
     assert assigned_ids.index("t3_inv") < assigned_ids.index("t1_inv")
 
 

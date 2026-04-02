@@ -52,6 +52,4 @@ sla:
   min_throughput_ratio: 0.80
 
 scheduler:
-  alpha: 0.4 # 0.6
-  beta: 0.6 #0.4
-  sliding_window: 1.0
+  sliding_window: 5.0

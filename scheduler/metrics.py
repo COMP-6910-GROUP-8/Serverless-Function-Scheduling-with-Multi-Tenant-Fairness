@@ -323,7 +323,8 @@ def generate_summary_md(
         "fifo": "FIFO", "round_robin": "Round-Robin",
         "sjf": "SJF", "fair_share": "Fair-Share",
     }
-    experiments = [e for e in ["steady_state", "burst_test", "skewed_load"] if e in all_experiment_data]
+    experiment_order = ["steady_state", "burst_test", "skewed_load", "stress_test"]
+    experiments = [e for e in experiment_order if e in all_experiment_data]
 
     lines = ["# Experiment Results Summary\n"]
 
@@ -348,8 +349,8 @@ def generate_summary_md(
     for exp_name in experiments:
         exp_data = all_experiment_data[exp_name]
         lines.append(f"### {exp_name.replace('_', ' ').title()}\n")
-        lines.append("| Scheduler | Small | Medium | Large | Large:Small Ratio |")
-        lines.append("|-----------|------:|-------:|------:|------------------:|")
+        lines.append("| Scheduler | Small | Medium | Large |")
+        lines.append("|-----------|------:|-------:|------:|")
         for s in schedulers:
             if s not in exp_data:
                 continue
@@ -359,21 +360,11 @@ def generate_summary_md(
                 vals = [m["sla_violation_rate"] for m in metrics if m["tenant_size"] == size]
                 by_size[size] = float(np.mean(vals)) if vals else 0.0
 
-            small_v = by_size["small"]
-            large_v = by_size["large"]
-            if small_v > 0.001:
-                ratio = f"{large_v / small_v:.1f}x"
-            elif large_v > 0.001:
-                ratio = "∞"
-            else:
-                ratio = "1.0x"
-
             lines.append(
                 f"| {sched_labels[s]} "
-                f"| {small_v:.4f} "
+                f"| {by_size['small']:.4f} "
                 f"| {by_size['medium']:.4f} "
-                f"| {large_v:.4f} "
-                f"| {ratio} |"
+                f"| {by_size['large']:.4f} |"
             )
         lines.append("")
 

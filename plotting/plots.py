@@ -99,102 +99,35 @@ def plot_sla_violation_rate(experiment_data: dict, output_path: str):
 
 
 def plot_sla_violation_by_size(experiment_data: dict, output_path: str):
-    """SLA violation rate by tenant size + Large:Small disparity ratio subplot."""
+    """SLA violation rate by tenant size — grouped bar chart."""
     schedulers = _get_schedulers(experiment_data)
     n_schedulers = len(schedulers)
     bar_width = 0.18
+    x = np.arange(len(SIZE_ORDER))
 
-    # Collect per-scheduler, per-size violation rates
-    sched_size_viol = {}
-    for sched in schedulers:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for idx, sched in enumerate(schedulers):
         metrics = experiment_data[sched]["tenant_metrics"]
         size_viol = {}
         for size in SIZE_ORDER:
             vals = [m["sla_violation_rate"] for m in metrics if m["tenant_size"] == size]
             size_viol[size] = np.mean(vals) if vals else 0.0
-        sched_size_viol[sched] = size_viol
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6),
-                                    gridspec_kw={"width_ratios": [2, 1]})
-
-    # Left: grouped bar chart of violation rates by size
-    x = np.arange(len(SIZE_ORDER))
-    for idx, sched in enumerate(schedulers):
-        values = [sched_size_viol[sched][s] for s in SIZE_ORDER]
+        values = [size_viol[s] for s in SIZE_ORDER]
         offset = (idx - n_schedulers / 2 + 0.5) * bar_width
-        bars = ax1.bar(x + offset, values, bar_width,
-                       label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
-                       edgecolor="white", linewidth=0.5)
-        # Add value labels on bars
+        bars = ax.bar(x + offset, values, bar_width,
+                      label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
+                      edgecolor="white", linewidth=0.5)
         for bar, val in zip(bars, values):
             if val > 0.01:
-                ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
-                         f"{val:.1%}", ha="center", va="bottom", fontsize=6, rotation=90)
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+                        f"{val:.1%}", ha="center", va="bottom", fontsize=6, rotation=90)
 
-    ax1.set_xlabel("Tenant Size")
-    ax1.set_ylabel("SLA Violation Rate")
-    ax1.set_title("SLA Violation Rate by Tenant Size")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels([s.capitalize() for s in SIZE_ORDER])
-    ax1.legend(fontsize=8)
-
-    # Right: Large:Small disparity ratio bar chart
-    ratios = []
-    ratio_labels = []
-    ratio_colors = []
-    for sched in schedulers:
-        small_v = sched_size_viol[sched]["small"]
-        large_v = sched_size_viol[sched]["large"]
-        if small_v > 0.001:
-            ratio = large_v / small_v
-        elif large_v > 0.001:
-            ratio = float("inf")
-        else:
-            ratio = 1.0  # both zero
-        ratios.append(ratio)
-        ratio_labels.append(SCHEDULER_LABELS[sched])
-        ratio_colors.append(SCHEDULER_COLORS[sched])
-
-    # Cap infinity for display, mark with special annotation
-    display_ratios = []
-    inf_indices = []
-    finite_max = max((r for r in ratios if r != float("inf")), default=10.0)
-    cap = max(finite_max * 1.3, 12.0)
-    for i, r in enumerate(ratios):
-        if r == float("inf"):
-            display_ratios.append(cap)
-            inf_indices.append(i)
-        else:
-            display_ratios.append(r)
-
-    x2 = np.arange(len(schedulers))
-    bars2 = ax2.bar(x2, display_ratios, color=ratio_colors, edgecolor="white", linewidth=0.5)
-
-    # Add ratio labels on bars
-    for i, (bar, r) in enumerate(zip(bars2, ratios)):
-        label = "∞" if r == float("inf") else f"{r:.1f}×"
-        ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.2,
-                 label, ha="center", va="bottom", fontsize=10, fontweight="bold")
-
-    # Draw a reference line at 2.5x (our claimed threshold)
-    ax2.axhline(y=2.5, color="red", linestyle="--", linewidth=1.2, alpha=0.7)
-    ax2.text(len(schedulers) - 0.5, 2.7, "2.5× threshold", ha="right",
-             fontsize=8, color="red", fontstyle="italic")
-    # Draw a reference line at 1.0x (perfect equity)
-    ax2.axhline(y=1.0, color="gray", linestyle=":", linewidth=1.0, alpha=0.5)
-    ax2.text(len(schedulers) - 0.5, 1.15, "1.0× (perfect equity)", ha="right",
-             fontsize=7, color="gray")
-
-    ax2.set_ylabel("Large:Small Violation Ratio")
-    ax2.set_title("Disparity Ratio (Distribution of Pain)")
-    ax2.set_xticks(x2)
-    ax2.set_xticklabels(ratio_labels, fontsize=8, rotation=15)
-
-    # Mark infinity bars with hatching
-    for i in inf_indices:
-        bars2[i].set_hatch("//")
-
-    plt.tight_layout()
+    ax.set_xlabel("Tenant Size")
+    ax.set_ylabel("SLA Violation Rate")
+    ax.set_title("SLA Violation Rate by Tenant Size")
+    ax.set_xticks(x)
+    ax.set_xticklabels([s.capitalize() for s in SIZE_ORDER])
+    ax.legend(fontsize=8)
     _save(output_path)
 
 
@@ -322,24 +255,24 @@ def plot_throughput_boxplot(experiment_data: dict, output_path: str):
 
 
 def plot_ablation_heatmap(ablation_data: dict, output_path: str):
-    alphas = sorted(ablation_data.keys())
+    params = sorted(ablation_data.keys())
     metric_names = ["jains_fairness_index", "avg_latency", "sla_violation_rate"]
     display_names = ["Fairness Index", "Avg Latency (s)", "SLA Violation Rate"]
 
     matrix = []
     for metric in metric_names:
-        row = [ablation_data[a].get(metric, 0.0) for a in alphas]
+        row = [ablation_data[p].get(metric, 0.0) for p in params]
         matrix.append(row)
 
     fig, ax = plt.subplots(figsize=(10, 4))
     im = ax.imshow(matrix, aspect="auto", cmap="RdYlGn")
-    ax.set_xticks(range(len(alphas)))
-    ax.set_xticklabels([f"\u03b1={a}" for a in alphas])
+    ax.set_xticks(range(len(params)))
+    ax.set_xticklabels([f"sw={p}s" for p in params])
     ax.set_yticks(range(len(display_names)))
     ax.set_yticklabels(display_names)
-    ax.set_title("Ablation Study: \u03b1/\u03b2 Sensitivity")
+    ax.set_title("Ablation Study: Sliding Window Sensitivity")
     for i in range(len(display_names)):
-        for j in range(len(alphas)):
+        for j in range(len(params)):
             ax.text(j, i, f"{matrix[i][j]:.3f}", ha="center", va="center", fontsize=9)
     fig.colorbar(im, ax=ax)
     _save(output_path)
@@ -427,6 +360,76 @@ def plot_max_wait_by_function_type(experiment_data: dict, output_path: str):
     ax.set_xticks(x)
     ax.set_xticklabels([f.capitalize() for f in FTYPE_ORDER])
     ax.legend(fontsize=8)
+    _save(output_path)
+
+
+def plot_stress_test_delta(
+    steady_data: dict, stress_data: dict, output_path: str
+):
+    """
+    Bar chart showing the change in small-tenant SLA violation rate from
+    steady_state to stress_test for each scheduler. Measures robustness
+    to workload composition changes.
+    """
+    schedulers = _get_schedulers(steady_data)
+
+    steady_small = {}
+    stress_small = {}
+    for sched in schedulers:
+        s_metrics = steady_data[sched]["tenant_metrics"]
+        t_metrics = stress_data[sched]["tenant_metrics"]
+        s_vals = [m["sla_violation_rate"] for m in s_metrics if m["tenant_size"] == "small"]
+        t_vals = [m["sla_violation_rate"] for m in t_metrics if m["tenant_size"] == "small"]
+        steady_small[sched] = np.mean(s_vals) if s_vals else 0.0
+        stress_small[sched] = np.mean(t_vals) if t_vals else 0.0
+
+    labels = [SCHEDULER_LABELS[s] for s in schedulers]
+    colors = [SCHEDULER_COLORS[s] for s in schedulers]
+    steady_vals = [steady_small[s] for s in schedulers]
+    stress_vals = [stress_small[s] for s in schedulers]
+    deltas = [stress_vals[i] - steady_vals[i] for i in range(len(schedulers))]
+
+    x = np.arange(len(schedulers))
+    bar_width = 0.3
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Left: side-by-side steady vs stress small-tenant violation rates
+    ax1.bar(x - bar_width / 2, steady_vals, bar_width, label="Steady State",
+            color=[c + "88" for c in colors], edgecolor="white")
+    ax1.bar(x + bar_width / 2, stress_vals, bar_width, label="Stress Test",
+            color=colors, edgecolor="white")
+    for i in range(len(schedulers)):
+        for val, offset in [(steady_vals[i], -bar_width / 2), (stress_vals[i], bar_width / 2)]:
+            if val > 0.0005:
+                ax1.text(x[i] + offset, val + 0.001, f"{val:.2%}",
+                         ha="center", va="bottom", fontsize=8)
+            else:
+                ax1.text(x[i] + offset, 0.002, "0%", ha="center", va="bottom", fontsize=8)
+    ax1.set_xlabel("Scheduler")
+    ax1.set_ylabel("Small Tenant SLA Violation Rate")
+    ax1.set_title("Small Tenant Violations: Steady vs Stress")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels)
+    ax1.legend()
+
+    # Right: delta (stress - steady)
+    bar_colors = ["#e74c3c" if d > 0.001 else "#2ecc71" for d in deltas]
+    bars = ax2.bar(x, deltas, color=bar_colors, edgecolor="white")
+    for bar, d in zip(bars, deltas):
+        label = f"+{d:.2%}" if d > 0 else f"{d:.2%}"
+        ax2.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + 0.001 if d >= 0 else bar.get_height() - 0.003,
+                 label, ha="center", va="bottom" if d >= 0 else "top", fontsize=9,
+                 fontweight="bold")
+    ax2.axhline(y=0, color="gray", linestyle="-", linewidth=0.5)
+    ax2.set_xlabel("Scheduler")
+    ax2.set_ylabel("Delta (Stress - Steady)")
+    ax2.set_title("Workload Robustness: Change in Small Tenant Violations")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels)
+
+    plt.tight_layout()
     _save(output_path)
 
 

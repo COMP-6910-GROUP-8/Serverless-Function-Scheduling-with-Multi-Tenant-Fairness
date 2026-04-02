@@ -27,15 +27,18 @@ from scheduler.metrics import (
     generate_summary_md,
 )
 from plotting.plots import (
+    plot_fairness_index,
     plot_p95_latency_by_size,
     plot_sla_violation_by_size, plot_sla_compliance_by_size,
     plot_throughput_equity, plot_throughput_boxplot,
     plot_ablation_heatmap, plot_scheduling_overhead, plot_p95_latency_by_function_type,
+    plot_max_wait_by_function_type,
     plot_throughput_ratio_by_function_type,
+    plot_stress_test_delta,
 )
 
 SCHEDULERS = ["fifo", "round_robin", "sjf", "fair_share"]
-EXPERIMENTS = ["steady_state", "burst_test", "skewed_load"]
+EXPERIMENTS = ["steady_state", "burst_test", "skewed_load", "stress_test"]
 
 
 def get_scheduler(name: str, config: dict):
@@ -49,11 +52,7 @@ def get_scheduler(name: str, config: dict):
     elif name == "fair_share":
         sched_cfg = config.get("scheduler", {})
         return FairShareScheduler(
-            alpha=sched_cfg.get("alpha", 0.6),
-            beta=sched_cfg.get("beta", 0.4),
-            sliding_window=sched_cfg.get("sliding_window", 1.0),
-            sla_latency_threshold=config["sla"]["p95_latency_threshold"],
-            sla_min_throughput_ratio=config["sla"]["min_throughput_ratio"],
+            sliding_window=sched_cfg.get("sliding_window", 5.0),
             container_ttl=config["cold_start"]["container_ttl"],
         )
     else:
@@ -126,13 +125,24 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
 
         # Generate comparison plots for this experiment
         comp_dir = os.path.join(output_dir, "comparison", exp_name)
+        plot_fairness_index(experiment_data, os.path.join(comp_dir, "fairness_index.png"))
         plot_sla_violation_by_size(experiment_data, os.path.join(comp_dir, "sla_violation_by_size.png"))
         plot_sla_compliance_by_size(experiment_data, os.path.join(comp_dir, "sla_compliance_by_size.png"))
         plot_throughput_equity(experiment_data, os.path.join(comp_dir, "throughput_equity.png"))
         plot_p95_latency_by_size(experiment_data, os.path.join(comp_dir, "p95_latency_by_size.png"))
         plot_p95_latency_by_function_type(experiment_data, os.path.join(comp_dir, "p95_latency_by_function_type.png"))
+        plot_max_wait_by_function_type(experiment_data, os.path.join(comp_dir, "max_wait_by_function_type.png"))
         plot_throughput_ratio_by_function_type(experiment_data, os.path.join(comp_dir, "throughput_ratio_by_function_type.png"))
         plot_throughput_boxplot(experiment_data, os.path.join(comp_dir, "throughput_boxplot.png"))
+
+    # Generate stress test delta plot (steady_state vs stress_test comparison)
+    if "steady_state" in all_experiment_data and "stress_test" in all_experiment_data:
+        comp_dir = os.path.join(output_dir, "comparison")
+        plot_stress_test_delta(
+            all_experiment_data["steady_state"],
+            all_experiment_data["stress_test"],
+            os.path.join(comp_dir, "stress_test_delta.png"),
+        )
 
     # Generate cross-experiment summary
     generate_summary_md(all_experiment_data, os.path.join(output_dir, "summary.md"))
@@ -177,20 +187,18 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
     ablation_config = load_config(
         os.path.join(configs_dir, "ablation.yaml"), seed_override=seed_override
     )
-    alpha_values = ablation_config["experiment"]["alpha_values"]
+    sw_values = ablation_config["experiment"]["sliding_window_values"]
     ablation_data = {}
 
-    for alpha in alpha_values:
+    for sw in sw_values:
         cfg = load_config(
             os.path.join(configs_dir, "ablation.yaml"), seed_override=seed_override
         )
-        cfg["scheduler"]["alpha"] = alpha
-        cfg["scheduler"]["beta"] = 1.0 - alpha
+        cfg.setdefault("scheduler", {})["sliding_window"] = sw
 
         result = run_single(cfg, "fair_share", output_dir, verbose)
-        # Compute avg latency across all tenants for ablation heatmap
         all_latencies = [m["avg_latency"] for m in result["tenant_metrics"] if m["avg_latency"] > 0]
-        ablation_data[alpha] = {
+        ablation_data[sw] = {
             "jains_fairness_index": result["summary"]["jains_fairness_index"],
             "avg_latency": float(np.mean(all_latencies)) if all_latencies else 0.0,
             "sla_violation_rate": result["summary"]["overall_sla_violation_rate"],
