@@ -21,13 +21,13 @@ Requires Python 3.10+.
 ### Single Experiment
 
 ```bash
-python main.py --config configs/burst_test.yaml --scheduler fair_share
+python3 main.py --config configs/burst_test.yaml --scheduler fair_share
 ```
 
 ### Full Benchmark (all experiments x all schedulers)
 
 ```bash
-python main.py --run-all
+python3 main.py --run-all
 ```
 
 ### Options

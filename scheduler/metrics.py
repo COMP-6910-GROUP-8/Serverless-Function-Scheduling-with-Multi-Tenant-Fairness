@@ -105,9 +105,14 @@ def compute_tenant_metrics(
         results.append({
             "tenant_id": tenant.id,
             "tenant_size": tenant.size,
+            "arrival_rate": tenant.arrival_rate,
             "avg_latency": float(np.mean(latencies)) if latencies else 0.0,
             "p95_latency": p95,
             "throughput": actual_throughput,
+            "throughput_ratio": (
+                actual_throughput / tenant.arrival_rate
+                if tenant.arrival_rate > 0 else 0.0
+            ),
             "sla_violation_rate": (
                 invocations_over_threshold / len(latencies)
                 if latencies else 0.0
@@ -277,8 +282,8 @@ def export_metrics_csv(tenant_metrics: list[dict], output_path: str):
     """Write per-tenant metrics summary CSV."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fieldnames = [
-        "tenant_id", "tenant_size", "avg_latency", "p95_latency",
-        "throughput", "sla_violation_rate", "sla_violated",
+        "tenant_id", "tenant_size", "arrival_rate", "avg_latency", "p95_latency",
+        "throughput", "throughput_ratio", "sla_violation_rate", "sla_violated",
         "invocations_violating_latency", "total_invocations",
         "cold_start_rate", "fair_share_ratio",
     ]
@@ -300,3 +305,119 @@ def export_experiment_json(
     }
     with open(output_path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def generate_summary_md(
+    all_experiment_data: dict[str, dict[str, dict]],
+    output_path: str,
+):
+    """Generate summary.md with scheduling overhead and distribution-of-pain tables.
+
+    Args:
+        all_experiment_data: {experiment_name: {scheduler_name: {"summary": ..., "tenant_metrics": ...}}}
+        output_path: path to write summary.md
+    """
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    schedulers = ["fifo", "round_robin", "sjf", "fair_share"]
+    sched_labels = {
+        "fifo": "FIFO", "round_robin": "Round-Robin",
+        "sjf": "SJF", "fair_share": "Fair-Share",
+    }
+    experiments = [e for e in ["steady_state", "burst_test", "skewed_load"] if e in all_experiment_data]
+
+    lines = ["# Experiment Results Summary\n"]
+
+    # --- Scheduling Overhead ---
+    lines.append("## Scheduling Overhead\n")
+    for exp_name in experiments:
+        exp_data = all_experiment_data[exp_name]
+        lines.append(f"### {exp_name.replace('_', ' ').title()}\n")
+        lines.append("| Scheduler | Avg Overhead (ms) | P95 Overhead (ms) |")
+        lines.append("|-----------|------------------:|------------------:|")
+        for s in schedulers:
+            if s not in exp_data:
+                continue
+            summary = exp_data[s]["summary"]
+            avg = summary["avg_scheduling_overhead_ms"]
+            p95 = summary["p95_scheduling_overhead_ms"]
+            lines.append(f"| {sched_labels[s]} | {avg:.3f} | {p95:.3f} |")
+        lines.append("")
+
+    # --- Distribution of Pain (SLA Violation by Tenant Size) ---
+    lines.append("## Distribution of Pain — SLA Violation Rate by Tenant Size\n")
+    for exp_name in experiments:
+        exp_data = all_experiment_data[exp_name]
+        lines.append(f"### {exp_name.replace('_', ' ').title()}\n")
+        lines.append("| Scheduler | Small | Medium | Large | Large:Small Ratio |")
+        lines.append("|-----------|------:|-------:|------:|------------------:|")
+        for s in schedulers:
+            if s not in exp_data:
+                continue
+            metrics = exp_data[s]["tenant_metrics"]
+            by_size = {}
+            for size in ["small", "medium", "large"]:
+                vals = [m["sla_violation_rate"] for m in metrics if m["tenant_size"] == size]
+                by_size[size] = float(np.mean(vals)) if vals else 0.0
+
+            small_v = by_size["small"]
+            large_v = by_size["large"]
+            if small_v > 0.001:
+                ratio = f"{large_v / small_v:.1f}x"
+            elif large_v > 0.001:
+                ratio = "∞"
+            else:
+                ratio = "1.0x"
+
+            lines.append(
+                f"| {sched_labels[s]} "
+                f"| {small_v:.4f} "
+                f"| {by_size['medium']:.4f} "
+                f"| {large_v:.4f} "
+                f"| {ratio} |"
+            )
+        lines.append("")
+
+    # --- P95 Latency by Tenant Size ---
+    lines.append("## P95 Latency by Tenant Size (seconds)\n")
+    for exp_name in experiments:
+        exp_data = all_experiment_data[exp_name]
+        lines.append(f"### {exp_name.replace('_', ' ').title()}\n")
+        lines.append("| Scheduler | Small | Medium | Large |")
+        lines.append("|-----------|------:|-------:|------:|")
+        for s in schedulers:
+            if s not in exp_data:
+                continue
+            metrics = exp_data[s]["tenant_metrics"]
+            by_size = {}
+            for size in ["small", "medium", "large"]:
+                vals = [m["p95_latency"] for m in metrics if m["tenant_size"] == size]
+                by_size[size] = float(np.mean(vals)) if vals else 0.0
+            lines.append(
+                f"| {sched_labels[s]} "
+                f"| {by_size['small']:.4f} "
+                f"| {by_size['medium']:.4f} "
+                f"| {by_size['large']:.4f} |"
+            )
+        lines.append("")
+
+    # --- Per-Function-Type Metrics ---
+    lines.append("## Per-Function-Type P95 Latency (seconds)\n")
+    for exp_name in experiments:
+        exp_data = all_experiment_data[exp_name]
+        lines.append(f"### {exp_name.replace('_', ' ').title()}\n")
+        lines.append("| Scheduler | Lightweight | Medium | Heavy |")
+        lines.append("|-----------|------------:|-------:|------:|")
+        for s in schedulers:
+            if s not in exp_data:
+                continue
+            ft = exp_data[s]["summary"].get("per_function_type", {})
+            lines.append(
+                f"| {sched_labels[s]} "
+                f"| {ft.get('lightweight', {}).get('p95_latency', 0):.4f} "
+                f"| {ft.get('medium', {}).get('p95_latency', 0):.4f} "
+                f"| {ft.get('heavy', {}).get('p95_latency', 0):.4f} |"
+            )
+        lines.append("")
+
+    with open(output_path, "w") as f:
+        f.write("\n".join(lines))

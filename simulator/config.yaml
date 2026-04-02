@@ -4,21 +4,21 @@ simulation:
 tenants:
   large:
     count: 5
-    arrival_rate: [50, 100]
+    arrival_rate: [ 50, 100 ]
     function_profile:
       heavy: 0.6
       medium: 0.3
       lightweight: 0.1
   medium:
     count: 10
-    arrival_rate: [10, 30]
+    arrival_rate: [ 10, 30 ]
     function_profile:
       heavy: 0.2
       medium: 0.5
       lightweight: 0.3
   small:
     count: 10
-    arrival_rate: [1, 5]
+    arrival_rate: [ 1, 5 ]
     function_profile:
       heavy: 0.1
       medium: 0.2
@@ -33,25 +33,25 @@ function_archetypes:
   lightweight:
     cpu: 100
     memory: 64
-    duration: [0.005, 0.020]
+    duration: [ 0.005, 0.020 ]
   medium:
     cpu: 250
     memory: 256
-    duration: [0.030, 0.080]
+    duration: [ 0.030, 0.080 ]
   heavy:
     cpu: 500
     memory: 512
-    duration: [0.100, 0.300]
+    duration: [ 0.100, 0.300 ]
 
 cold_start:
-  penalty: 0.200
+  penalty: 0.050
   container_ttl: 300
 
 sla:
-  p95_latency_threshold: 0.500
+  p95_latency_threshold: 1.000
   min_throughput_ratio: 0.80
 
 scheduler:
-  alpha: 0.6
-  beta: 0.4
+  alpha: 0.4 # 0.6
+  beta: 0.6 #0.4
   sliding_window: 1.0

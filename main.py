@@ -24,12 +24,14 @@ from scheduler.metrics import (
     compute_tenant_metrics, compute_experiment_summary,
     compute_function_type_metrics,
     export_invocations_csv, export_metrics_csv, export_experiment_json,
+    generate_summary_md,
 )
 from plotting.plots import (
-    plot_fairness_index, plot_p95_latency_by_size, plot_sla_violation_rate,
-    plot_cold_start_by_size, plot_throughput_boxplot, plot_ablation_heatmap,
-    plot_scalability, plot_p95_latency_by_function_type,
-    plot_max_wait_by_function_type, plot_throughput_ratio_by_function_type,
+    plot_p95_latency_by_size,
+    plot_sla_violation_by_size, plot_sla_compliance_by_size,
+    plot_throughput_equity, plot_throughput_boxplot,
+    plot_ablation_heatmap, plot_scheduling_overhead, plot_p95_latency_by_function_type,
+    plot_throughput_ratio_by_function_type,
 )
 
 SCHEDULERS = ["fifo", "round_robin", "sjf", "fair_share"]
@@ -105,6 +107,7 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
     configs_dir = os.path.join(os.path.dirname(__file__), "configs")
 
     # --- Standard experiments (steady_state, burst_test, skewed_load) ---
+    all_experiment_data = {}
     for exp_name in EXPERIMENTS:
         config_path = os.path.join(configs_dir, f"{exp_name}.yaml")
         experiment_data = {}
@@ -114,6 +117,8 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
             result = run_single(config, sched_name, output_dir, verbose)
             experiment_data[sched_name] = result
 
+        all_experiment_data[exp_name] = experiment_data
+
         # Export experiment JSON
         all_summaries = {s: d["summary"] for s, d in experiment_data.items()}
         json_path = os.path.join(output_dir, exp_name, "experiment_result.json")
@@ -121,14 +126,16 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
 
         # Generate comparison plots for this experiment
         comp_dir = os.path.join(output_dir, "comparison", exp_name)
-        plot_fairness_index(experiment_data, os.path.join(comp_dir, "fairness_index.png"))
+        plot_sla_violation_by_size(experiment_data, os.path.join(comp_dir, "sla_violation_by_size.png"))
+        plot_sla_compliance_by_size(experiment_data, os.path.join(comp_dir, "sla_compliance_by_size.png"))
+        plot_throughput_equity(experiment_data, os.path.join(comp_dir, "throughput_equity.png"))
         plot_p95_latency_by_size(experiment_data, os.path.join(comp_dir, "p95_latency_by_size.png"))
-        plot_sla_violation_rate(experiment_data, os.path.join(comp_dir, "sla_violation_rate.png"))
-        plot_cold_start_by_size(experiment_data, os.path.join(comp_dir, "cold_start_by_size.png"))
-        plot_throughput_boxplot(experiment_data, os.path.join(comp_dir, "throughput_boxplot.png"))
         plot_p95_latency_by_function_type(experiment_data, os.path.join(comp_dir, "p95_latency_by_function_type.png"))
-        plot_max_wait_by_function_type(experiment_data, os.path.join(comp_dir, "max_wait_by_function_type.png"))
         plot_throughput_ratio_by_function_type(experiment_data, os.path.join(comp_dir, "throughput_ratio_by_function_type.png"))
+        plot_throughput_boxplot(experiment_data, os.path.join(comp_dir, "throughput_boxplot.png"))
+
+    # Generate cross-experiment summary
+    generate_summary_md(all_experiment_data, os.path.join(output_dir, "summary.md"))
 
     # --- Scalability experiment ---
     print(f"\n{'='*60}")
@@ -161,7 +168,7 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
             scalability_data[sched_name].append((n_tenants, overhead))
 
     comp_dir = os.path.join(output_dir, "comparison")
-    plot_scalability(scalability_data, os.path.join(comp_dir, "scalability.png"))
+    plot_scheduling_overhead(all_experiment_data, os.path.join(comp_dir, "scheduling_overhead.png"))
 
     # --- Ablation experiment ---
     print(f"\n{'='*60}")
