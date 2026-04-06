@@ -84,20 +84,6 @@ def plot_p95_latency_by_size(experiment_data: dict, output_path: str, sla_thresh
     _save(output_path)
 
 
-def plot_sla_violation_rate(experiment_data: dict, output_path: str):
-    schedulers = _get_schedulers(experiment_data)
-    values = [experiment_data[s]["summary"]["overall_sla_violation_rate"] for s in schedulers]
-    colors = [SCHEDULER_COLORS[s] for s in schedulers]
-    labels = [SCHEDULER_LABELS[s] for s in schedulers]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(labels, values, color=colors, edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("SLA Violation Rate")
-    ax.set_title("SLA Violation Rate by Scheduler")
-    ax.set_ylim(0, max(max(values) * 1.2, 0.1) if values else 0.1)
-    _save(output_path)
-
-
 def plot_sla_violation_by_size(experiment_data: dict, output_path: str):
     """SLA violation rate by tenant size — grouped bar chart."""
     schedulers = _get_schedulers(experiment_data)
@@ -200,34 +186,6 @@ def plot_throughput_equity(experiment_data: dict, output_path: str):
     ax.set_xlabel("Tenant Size")
     ax.set_ylabel("Throughput Ratio (Completed / Expected)")
     ax.set_title("Throughput Equity by Tenant Size")
-    ax.set_xticks(x)
-    ax.set_xticklabels([s.capitalize() for s in SIZE_ORDER])
-    ax.legend(fontsize=8)
-    _save(output_path)
-
-
-def plot_cold_start_by_size(experiment_data: dict, output_path: str):
-    schedulers = _get_schedulers(experiment_data)
-    n_schedulers = len(schedulers)
-    bar_width = 0.18
-    x = np.arange(len(SIZE_ORDER))
-
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for idx, sched in enumerate(schedulers):
-        metrics = experiment_data[sched]["tenant_metrics"]
-        size_cs = {}
-        for size in SIZE_ORDER:
-            vals = [m["cold_start_rate"] for m in metrics if m["tenant_size"] == size]
-            size_cs[size] = np.mean(vals) if vals else 0.0
-        values = [size_cs[s] for s in SIZE_ORDER]
-        offset = (idx - n_schedulers / 2 + 0.5) * bar_width
-        ax.bar(x + offset, values, bar_width,
-               label=SCHEDULER_LABELS[sched], color=SCHEDULER_COLORS[sched],
-               edgecolor="white", linewidth=0.5)
-
-    ax.set_xlabel("Tenant Size")
-    ax.set_ylabel("Cold Start Rate")
-    ax.set_title("Cold Start Rate by Tenant Size")
     ax.set_xticks(x)
     ax.set_xticklabels([s.capitalize() for s in SIZE_ORDER])
     ax.legend(fontsize=8)
