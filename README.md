@@ -1,12 +1,12 @@
 # Serverless-Function-Scheduling-with-Multi-Tenant-Fairness
 
-Fairness-aware serverless function scheduling for multi-tenant cloud environments.
+Serverless Function Scheduling with Multi-Tenant Fairness
 
 **COMP 6910 — Group 8**
 
-## Problem
+## Problem Statement & Motivation
 
-Serverless platforms promise all tenants the same SLA. In practice, large tenants' heavy or bursty workloads starve smaller tenants, causing effective SLA violations. This project simulates and evaluates a fairness-aware scheduler that prevents this.
+Serverless platforms (AWS Lambda, Azure Functions) enable on-demand function execution in multi-tenant environments. However, current schedulers (FIFO, round-robin) prioritize throughput / latency but fail to ensure proportional resource allocation across tenants. Specifically, they lack mechanisms to guarantee that each tenant receives a share of resources proportional to their fair entitlement. This unpredictability causes SLA violations and degrades service quality for smaller users—undermining serverless computing's core promise of predictable, on-demand execution.
 
 ## Setup
 
@@ -62,7 +62,7 @@ pytest tests/test_schedulers.py -v
 - **FIFO** — First-in-first-out, no fairness
 - **Round-Robin** — Equal turns per tenant
 - **SJF** — Shortest job first
-- **Fair-Share** — Our proposed scheduler using `Priority = α·FairShareDeficit + β·SLA_Urgency`
+- **Fair-Share** — Our proposed 2 phase scheduler
 
 ## License
 
