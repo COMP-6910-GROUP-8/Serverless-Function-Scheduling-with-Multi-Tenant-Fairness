@@ -27,7 +27,6 @@
 """
 
 from dataclasses import dataclass, field
-from collections import deque
 
 
 @dataclass
@@ -101,6 +100,3 @@ class Tenant:
     # e.g., {"heavy": 0.6, "medium": 0.3, "lightweight": 0.1}
     function_profile: dict
     pending_queue: list = field(default_factory=list)
-    consumption_window: deque = field(default_factory=deque)
-    # Stores recent (timestamp, latency) tuples for time-windowed P95 calculation
-    recent_latencies: deque = field(default_factory=deque)

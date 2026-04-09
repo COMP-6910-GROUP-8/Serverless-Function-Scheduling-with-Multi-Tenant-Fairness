@@ -47,7 +47,6 @@ def generate_invocations(
     burst_cfg = config.get("experiment", {}).get("burst", None)
     overrides = config.get("experiment", {}).get("overrides", {})
 
-    # Apply per-tenant overrides (e.g., skewed load)
     tenant_map = {t.id: t for t in tenants}
     for tid, ovr in overrides.items():
         if tid in tenant_map and "arrival_rate" in ovr:
@@ -59,7 +58,6 @@ def generate_invocations(
     for tenant in tenants:
         func_types = list(tenant.function_profile.keys())
         func_weights = [tenant.function_profile[ft] for ft in func_types]
-        # Normalize weights just in case they don't sum to exactly 1.0
         total_w = sum(func_weights)
         func_probs = [w / total_w for w in func_weights]
 
@@ -67,13 +65,11 @@ def generate_invocations(
         seq = 0
 
         while t < duration:
-            # Determine effective arrival rate (handle burst windows)
             rate = tenant.arrival_rate
             if (burst_cfg and tenant.id == burst_cfg["tenant_id"]
                     and burst_cfg["start_time"] <= t < burst_cfg["start_time"] + burst_cfg["duration"]):
                 rate *= burst_cfg["multiplier"]
 
-            # Next arrival via exponential inter-arrival time (Poisson process)
             inter_arrival = rng.exponential(1.0 / rate) if rate > 0 else duration
             t += inter_arrival
             if t >= duration:
@@ -95,6 +91,5 @@ def generate_invocations(
             )
             all_invocations.append(inv)
 
-    # Sort all invocations globally by arrival time
     all_invocations.sort(key=lambda inv: inv.arrival_time)
     return all_invocations

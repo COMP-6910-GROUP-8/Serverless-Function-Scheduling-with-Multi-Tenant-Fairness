@@ -31,10 +31,6 @@ def _find_available_server(
     mem: int,
     provisional: dict[str, tuple[int, int]],
 ) -> Server | None:
-    """
-    Find first server with enough capacity after accounting for provisional
-    allocations made earlier in the same schedule() call.
-    """
     for server in servers:
         prov_cpu, prov_mem = provisional.get(server.id, (0, 0))
         if (server.cpu_used + prov_cpu + cpu <= server.cpu_capacity and
@@ -44,7 +40,6 @@ def _find_available_server(
 
 
 def _provision(provisional: dict, server: Server, cpu: int, mem: int):
-    """Track a provisional allocation so later invocations see updated capacity."""
     prev_cpu, prev_mem = provisional.get(server.id, (0, 0))
     provisional[server.id] = (prev_cpu + cpu, prev_mem + mem)
 
@@ -55,7 +50,7 @@ class FIFOScheduler(BaseScheduler):
     def schedule(self, pending_invocations, tenants, servers, current_time):
         sorted_inv = sorted(pending_invocations, key=lambda i: i.arrival_time)
         assignments = []
-        provisional = {}  # {server_id: (cpu_reserved, mem_reserved)}
+        provisional = {}
 
         for inv in sorted_inv:
             server = _find_available_server(
@@ -75,7 +70,6 @@ class RoundRobinScheduler(BaseScheduler):
         self._tenant_index = 0
 
     def schedule(self, pending_invocations, tenants, servers, current_time):
-        # Group pending by tenant, keeping arrival order within each tenant
         per_tenant = {}
         for inv in pending_invocations:
             per_tenant.setdefault(inv.tenant_id, []).append(inv)
@@ -88,9 +82,8 @@ class RoundRobinScheduler(BaseScheduler):
 
         assignments = []
         provisional = {}
-        # Wrap index to valid range
         self._tenant_index = self._tenant_index % len(active_tids)
-        stalled = 0  # tracks consecutive tenants we couldn't assign
+        stalled = 0
 
         while stalled < len(active_tids) and active_tids:
             tid = active_tids[self._tenant_index % len(active_tids)]
@@ -107,12 +100,10 @@ class RoundRobinScheduler(BaseScheduler):
                     _provision(provisional, server, inv.cpu_demand, inv.memory_demand)
                     queue.pop(0)
                     assigned = True
-                    # Remove tenant from active list if no more pending
                     if not queue:
                         active_tids.remove(tid)
                         if not active_tids:
                             break
-                        # Don't advance index since list shifted
                         stalled = 0
                         continue
 

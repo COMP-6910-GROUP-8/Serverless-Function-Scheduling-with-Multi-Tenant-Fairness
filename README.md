@@ -54,7 +54,7 @@ Comparison plots saved to `results/comparison/`.
 ## Running Tests
 
 ```bash
-pytest tests/test_schedulers.py -v
+python3 -m pytest tests/test_schedulers.py -v
 ```
 
 ## Schedulers
@@ -63,7 +63,3 @@ pytest tests/test_schedulers.py -v
 - **Round-Robin** — Equal turns per tenant
 - **SJF** — Shortest job first
 - **Fair-Share** — Our proposed 2 phase scheduler
-
-## License
-
-MIT

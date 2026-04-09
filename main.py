@@ -42,7 +42,7 @@ EXPERIMENTS = ["steady_state", "burst_test", "skewed_load", "stress_test"]
 
 
 def get_scheduler(name: str, config: dict):
-    """Map scheduler name to instance, passing config params to FairShare."""
+    """Map scheduler name to instance."""
     if name == "fifo":
         return FIFOScheduler()
     elif name == "round_robin":
@@ -70,29 +70,24 @@ def run_single(config: dict, scheduler_name: str, output_dir: str, verbose: bool
     print(f"Experiment: {exp_name} | Scheduler: {scheduler_name}")
     print(f"{'='*60}")
 
-    # Generate workload
     tenants = generate_tenants(config, rng)
     invocations = generate_invocations(tenants, config, rng)
     print(f"Generated {len(invocations)} invocations for {len(tenants)} tenants ({duration}s)")
 
-    # Run simulation
     scheduler = get_scheduler(scheduler_name, config)
     engine = SimulationEngine(config, scheduler=scheduler, verbose=verbose)
     completed, overheads = engine.run(tenants, invocations)
     print(f"Completed: {len(completed)} / {len(invocations)} invocations")
 
-    # Compute metrics
     tenant_map = {t.id: t for t in tenants}
     tenant_metrics = compute_tenant_metrics(completed, tenants, config, duration)
     ft_metrics = compute_function_type_metrics(completed, tenant_map, config, duration)
     summary = compute_experiment_summary(tenant_metrics, overheads, ft_metrics)
 
-    # Export CSV
     out_path = os.path.join(output_dir, exp_name, scheduler_name)
     export_invocations_csv(completed, tenant_map, os.path.join(out_path, "invocations.csv"))
     export_metrics_csv(tenant_metrics, os.path.join(out_path, "metrics_summary.csv"))
 
-    # Print summary
     _print_summary(exp_name, scheduler_name, summary, tenant_metrics)
 
     return {
@@ -105,7 +100,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
     """Run all experiments x all schedulers, generate comparison plots."""
     configs_dir = os.path.join(os.path.dirname(__file__), "configs")
 
-    # --- Standard experiments (steady_state, burst_test, skewed_load) ---
     all_experiment_data = {}
     for exp_name in EXPERIMENTS:
         config_path = os.path.join(configs_dir, f"{exp_name}.yaml")
@@ -118,12 +112,10 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
 
         all_experiment_data[exp_name] = experiment_data
 
-        # Export experiment JSON
         all_summaries = {s: d["summary"] for s, d in experiment_data.items()}
         json_path = os.path.join(output_dir, exp_name, "experiment_result.json")
         export_experiment_json(exp_name, all_summaries, json_path)
 
-        # Generate comparison plots for this experiment
         comp_dir = os.path.join(output_dir, "comparison", exp_name)
         plot_fairness_index(experiment_data, os.path.join(comp_dir, "fairness_index.png"))
         plot_sla_violation_by_size(experiment_data, os.path.join(comp_dir, "sla_violation_by_size.png"))
@@ -135,7 +127,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
         plot_throughput_ratio_by_function_type(experiment_data, os.path.join(comp_dir, "throughput_ratio_by_function_type.png"))
         plot_throughput_boxplot(experiment_data, os.path.join(comp_dir, "throughput_boxplot.png"))
 
-    # Generate stress test delta plot (steady_state vs stress_test comparison)
     if "steady_state" in all_experiment_data and "stress_test" in all_experiment_data:
         comp_dir = os.path.join(output_dir, "comparison")
         plot_stress_test_delta(
@@ -144,10 +135,8 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
             os.path.join(comp_dir, "stress_test_delta.png"),
         )
 
-    # Generate cross-experiment summary
     generate_summary_md(all_experiment_data, os.path.join(output_dir, "summary.md"))
 
-    # --- Scalability experiment ---
     print(f"\n{'='*60}")
     print("Running scalability experiment...")
     print(f"{'='*60}")
@@ -158,7 +147,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
     scalability_data = {s: [] for s in SCHEDULERS}
 
     for run_cfg in runs:
-        # Override tenant/server counts
         cfg = load_config(
             os.path.join(configs_dir, "scalability.yaml"), seed_override=seed_override
         )
@@ -166,7 +154,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
         n_servers = run_cfg["servers"]
         cfg["servers"]["count"] = n_servers
 
-        # Adjust tenant counts proportionally
         total_default = sum(cfg["tenants"][s]["count"] for s in cfg["tenants"])
         for size in cfg["tenants"]:
             ratio = cfg["tenants"][size]["count"] / total_default
@@ -180,7 +167,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
     comp_dir = os.path.join(output_dir, "comparison")
     plot_scheduling_overhead(all_experiment_data, os.path.join(comp_dir, "scheduling_overhead.png"))
 
-    # --- Ablation experiment ---
     print(f"\n{'='*60}")
     print("Running ablation experiment...")
     print(f"{'='*60}")
@@ -214,7 +200,6 @@ def run_all(output_dir: str, verbose: bool, seed_override: int = None):
 
 def _print_summary(exp_name: str, sched_name: str, summary: dict, tenant_metrics: list):
     """Print a formatted summary table to console."""
-    # Group latencies by tenant size
     size_latencies = {}
     for m in tenant_metrics:
         size = m["tenant_size"]
@@ -251,7 +236,6 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Override random seed")
     args = parser.parse_args()
 
-    # Validate args
     if not args.run_all and (not args.config or not args.scheduler):
         parser.error("Provide --config and --scheduler for a single run, or use --run-all")
 

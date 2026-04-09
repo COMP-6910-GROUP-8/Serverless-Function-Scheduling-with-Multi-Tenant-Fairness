@@ -46,12 +46,10 @@ def compute_tenant_metrics(
     sla_threshold = config["sla"]["p95_latency_threshold"]
     min_throughput_ratio = config["sla"]["min_throughput_ratio"]
 
-    # Group invocations by tenant
     by_tenant: dict[str, list[FunctionInvocation]] = {}
     for inv in invocations:
         by_tenant.setdefault(inv.tenant_id, []).append(inv)
 
-    # Total CPU-seconds across all tenants for fair share calculation
     total_cpu_seconds = sum(
         inv.cpu_demand * (inv.end_time - inv.start_time)
         for inv in invocations
@@ -86,7 +84,6 @@ def compute_tenant_metrics(
         cold_starts = [i.cold_start for i in tenant_invs]
         n = len(tenant_invs)
 
-        # CPU-seconds consumed by this tenant
         tenant_cpu_seconds = sum(
             inv.cpu_demand * (inv.end_time - inv.start_time)
             for inv in tenant_invs
@@ -94,10 +91,8 @@ def compute_tenant_metrics(
         )
 
         p95 = float(np.percentile(latencies, 95)) if latencies else 0.0
-        invocations_over_threshold = sum(1 for l in latencies if l > sla_threshold)
+        invocations_over_threshold = sum(1 for lat in latencies if lat > sla_threshold)
 
-        # Per-tenant SLA check: tenant is in violation if P95 > threshold
-        # OR throughput < minimum guarantee
         actual_throughput = n / duration if duration > 0 else 0.0
         expected_min_throughput = tenant.arrival_rate * min_throughput_ratio
         sla_violated = (p95 > sla_threshold) or (actual_throughput < expected_min_throughput)
@@ -141,10 +136,6 @@ def compute_function_type_metrics(
     for inv in invocations:
         by_ftype.setdefault(inv.function_type, []).append(inv)
 
-    # Count submitted invocations per function type from all generated invocations
-    # is not available here — use completed invocations as denominator proxy.
-    # Instead, compute throughput as completed/duration vs expected from arrival rates.
-
     # Build expected invocation counts per function type from tenant profiles
     expected_per_ftype: dict[str, float] = {}
     for tenant in tenants.values():
@@ -181,25 +172,16 @@ def compute_experiment_summary(
     function_type_metrics: dict | None = None,
 ) -> dict:
     """Aggregate tenant metrics into experiment-level summary."""
-    # Jain's over resource share ratios (primary): measures whether all tenants get
-    # equitable resource allocation (actual_share / proportional_entitlement)
     fair_share_ratios = [m["fair_share_ratio"] for m in tenant_metrics
-                         if m["throughput"] > 0]  # only active tenants
-
-    # Jain's over SLA compliance (secondary): measures whether all tenants
-    # receive equitable service quality (1 - violation_rate per tenant)
+                         if m["throughput"] > 0]
     sla_compliance = [1.0 - m["sla_violation_rate"] for m in tenant_metrics
                       if m["throughput"] > 0]
-
-    # SLA violation: per-tenant binary (is tenant's P95 > threshold?)
-    # already computed as sla_violated (bool) per tenant in compute_tenant_metrics
     tenants_with_work = [m for m in tenant_metrics if m["throughput"] > 0]
     tenant_violation_count = sum(1 for m in tenants_with_work if m["sla_violated"])
     tenant_sla_violation_rate = (
         tenant_violation_count / len(tenants_with_work) if tenants_with_work else 0.0
     )
 
-    # Invocation-weighted SLA violation rate
     total_violations = sum(m["invocations_violating_latency"] for m in tenant_metrics)
     total_invocations = sum(m["total_invocations"] for m in tenant_metrics)
     invocation_sla_violation_rate = (
@@ -208,7 +190,6 @@ def compute_experiment_summary(
 
     overhead_ms = [o * 1000 for o in scheduling_overheads] if scheduling_overheads else [0.0]
 
-    # Per-tenant-size breakdown
     per_size = {}
     for size in ["small", "medium", "large"]:
         size_metrics = [m for m in tenant_metrics if m["tenant_size"] == size and m["throughput"] > 0]

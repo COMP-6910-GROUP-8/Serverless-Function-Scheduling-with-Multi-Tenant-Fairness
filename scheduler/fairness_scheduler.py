@@ -45,14 +45,12 @@ class FairShareScheduler(BaseScheduler):
             self._total_dispatched = 0
             self._window_start = current_time
 
-        # Group pending by tenant, sort each queue by duration (SJF within tenant)
         per_tenant: dict[str, list[FunctionInvocation]] = {}
         for inv in pending_invocations:
             per_tenant.setdefault(inv.tenant_id, []).append(inv)
         for tid in per_tenant:
             per_tenant[tid].sort(key=lambda i: (i.base_duration, i.arrival_time))
 
-        # Pre-compute server availability
         server_avail: dict[str, tuple[int, int]] = {}
         for server in servers:
             server_avail[server.id] = (
@@ -64,8 +62,7 @@ class FairShareScheduler(BaseScheduler):
         provisional: dict[str, tuple[int, int]] = {}
         assigned_ids: set[str] = set()
 
-        # --- Phase 1: Fairness guarantee ---
-        # Each active tenant gets one dispatch, ordered by deficit (most under-served first)
+        # Phase 1: Fairness guarantee
         active_tids = list(per_tenant.keys())
         n_active = len(active_tids)
         if n_active > 0:
@@ -74,13 +71,12 @@ class FairShareScheduler(BaseScheduler):
             for tid in active_tids:
                 dispatched = self._dispatch_counts.get(tid, 0)
                 deficit = fair_share - dispatched
-                oldest = per_tenant[tid][0].arrival_time  # queue already sorted
+                oldest = per_tenant[tid][0].arrival_time
                 tenant_deficits.append((deficit, -oldest, tid))
-            # Highest deficit first, tie-break by oldest request
             tenant_deficits.sort(key=lambda x: (-x[0], x[1]))
 
             for _, _, tid in tenant_deficits:
-                inv = per_tenant[tid][0]  # shortest job (queue sorted by duration)
+                inv = per_tenant[tid][0]
                 server = self._select_server(
                     servers, inv.function_type, inv.cpu_demand, inv.memory_demand,
                     current_time, provisional, server_avail,
@@ -91,7 +87,7 @@ class FairShareScheduler(BaseScheduler):
                     self._track_provisional(provisional, server, inv)
                     self._track_dispatch(tid)
 
-        # --- Phase 2: Fill remaining capacity with global SJF ---
+        # Phase 2: Fill remaining capacity with global SJF
         remaining = [
             inv for inv in pending_invocations
             if inv.id not in assigned_ids
@@ -129,11 +125,7 @@ class FairShareScheduler(BaseScheduler):
         provisional: dict,
         server_avail: dict,
     ) -> Server | None:
-        """
-        Server selection: warm-container preference + least-loaded.
-        1. Prefer servers with warm container + capacity -> least CPU loaded
-        2. Fallback: any server with capacity -> least CPU loaded, tie-break by memory
-        """
+        """Select server: prefer warm container, then least-loaded. Tie-break by memory."""
         warm_best = None
         warm_best_key = None
         cold_best = None
